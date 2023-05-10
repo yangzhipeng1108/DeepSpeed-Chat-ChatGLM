@@ -14,7 +14,6 @@ from torch.utils.data.distributed import DistributedSampler
 
 from transformers import (
     AutoModelForCausalLM,
-    AutoTokenizer,
     SchedulerType,
     default_data_collator,
     get_scheduler,
@@ -26,8 +25,7 @@ from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 from utils.data.data_utils import create_prompt_dataset
-from utils.utils import print_rank_0, to_device, save_hf_format, set_random_seed, get_all_reduce_mean, \
-    get_optimizer_grouped_parameters, save_zero_three_model
+from utils.utils import print_rank_0, to_device, save_hf_format, set_random_seed, get_all_reduce_mean, get_optimizer_grouped_parameters, save_zero_three_model, load_hf_tokenizer,load_hf_chatglm_tokenizer
 from utils.ds_utils import get_train_ds_config
 from utils.module.lora import convert_linear_layer_to_lora, convert_lora_to_linear_layer, only_optimize_lora_parameters
 from utils.model.model_utils import create_hf_model
@@ -41,15 +39,15 @@ def parse_args():
                         nargs='*',
                         default=['Dahoas/rm-static'],
                         help='Path to the training dataset. Accepted format:'
-                             '1) a single data path, 2) multiple datasets in the'
-                             'form: dataset1-path dataset2-path ...')
+                        '1) a single data path, 2) multiple datasets in the'
+                        'form: dataset1-path dataset2-path ...')
     parser.add_argument('--data_split',
                         type=str,
-                        default='6,2,2',
+                        default='2,4,4',
                         help='Comma-separated list of proportions for training'
-                             'phase 1, 2, and 3 data. For example the split `6,2,2`'
-                             'will use 60% of data for phase 1, 20% for phase 2'
-                             'and 20% for phase 3.')
+                        'phase 1, 2, and 3 data. For example the split `6,2,2`'
+                        'will use 60% of data for phase 1, 20% for phase 2'
+                        'and 20% for phase 3.')
     parser.add_argument(
         '--sft_only_data_path',
         nargs='*',
@@ -163,14 +161,6 @@ def parse_args():
     parser.add_argument('--only_optimize_lora',
                         action='store_true',
                         help='Only optimize the LoRA parameters.')
-    parser.add_argument("--pre_seq_len",
-                        type=int,
-                        default=None,
-                        help="Total number of training epochs to perform.")
-    parser.add_argument("--quantization_bit",
-                        type=int,
-                        default=None,
-                        help="Total number of training epochs to perform.")
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
@@ -203,7 +193,7 @@ def main():
         'train_micro_batch_size_per_gpu'] = args.per_device_train_batch_size
     ds_config[
         'train_batch_size'] = args.per_device_train_batch_size * torch.distributed.get_world_size(
-    ) * args.gradient_accumulation_steps
+        ) * args.gradient_accumulation_steps
 
     # If passed along, set the training seed now.
     set_random_seed(args.seed)
@@ -211,12 +201,14 @@ def main():
     assert not args.offload, "zero-offload is not currently supported but coming soon!"
 
     torch.distributed.barrier()
+    print(args.model_name_or_path)
 
     if "chatglm" in args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
+        tokenizer = load_hf_chatglm_tokenizer(args.model_name_or_path,
+                                              trust_remote_code=True)
     else:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path,
-                                                  fast_tokenizer=True)
+        tokenizer = load_hf_tokenizer(args.model_name_or_path,
+                                      fast_tokenizer=True)
     tokenizer.pad_token = tokenizer.eos_token
 
     model = create_hf_model(AutoModelForCausalLM,
@@ -224,11 +216,6 @@ def main():
                             tokenizer,
                             ds_config,
                             disable_dropout=args.disable_dropout)
-
-    if args.quantization_bit is not None:
-        print(f"Quantized to {args.quantization_bit} bit")
-        model = model.quantize(args.quantization_bit)
-        model = model.half()
 
     if args.lora_dim > 0:
         model = convert_linear_layer_to_lora(model, args.lora_module_name,
@@ -238,7 +225,6 @@ def main():
 
     # Prepare the data
     train_phase = 1
-    print("test---1")
     train_dataset, eval_dataset = create_prompt_dataset(
         args.local_rank,
         args.data_path,
@@ -249,7 +235,7 @@ def main():
         tokenizer,
         args.max_seq_len,
         sft_only_data_path=args.sft_only_data_path)
-    print("test---2")
+
     # DataLoaders creation:
     if args.local_rank == -1:
         train_sampler = RandomSampler(train_dataset)
@@ -287,7 +273,6 @@ def main():
             pass
         return perplexity
 
-    print("test---3")
     # Split weights in two groups, one with weight decay and the other not.
     optimizer_grouped_parameters = get_optimizer_grouped_parameters(
         model, args.weight_decay)
@@ -296,7 +281,7 @@ def main():
     optimizer = AdamOptimizer(optimizer_grouped_parameters,
                               lr=args.learning_rate,
                               betas=(0.9, 0.95))
-    print("test---4")
+
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps)
     lr_scheduler = get_scheduler(
@@ -305,7 +290,7 @@ def main():
         num_warmup_steps=args.num_warmup_steps,
         num_training_steps=args.num_train_epochs * num_update_steps_per_epoch,
     )
-    print("test---5")
+
     model, optimizer, _, lr_scheduler = deepspeed.initialize(
         model=model,
         optimizer=optimizer,
@@ -324,10 +309,10 @@ def main():
         args.global_rank)
     perplexity = evaluation(model, eval_dataloader)
     print_rank_0(f"ppl: {perplexity}", args.global_rank)
-    print("test---6")
+
     for epoch in range(args.num_train_epochs):
         print_rank_0(
-            f"Beginning of Epoch {epoch + 1}/{args.num_train_epochs}, Total Micro Batches {len(train_dataloader)}",
+            f"Beginning of Epoch {epoch+1}/{args.num_train_epochs}, Total Micro Batches {len(train_dataloader)}",
             args.global_rank)
         model.train()
         for step, batch in enumerate(train_dataloader):
@@ -339,12 +324,12 @@ def main():
 
         # Evaluate perplexity on the validation set.
         print_rank_0(
-            f"***** Evaluating perplexity, Epoch {epoch + 1}/{args.num_train_epochs} *****",
+            f"***** Evaluating perplexity, Epoch {epoch+1}/{args.num_train_epochs} *****",
             args.global_rank)
         perplexity = evaluation(model, eval_dataloader)
         print_rank_0(f"ppl: {perplexity}", args.global_rank)
         model.tput_timer.update_epoch_count()
-    print("test---7")
+
     if args.output_dir is not None:
         print_rank_0('saving the final model ...', args.global_rank)
         model = convert_lora_to_linear_layer(model)

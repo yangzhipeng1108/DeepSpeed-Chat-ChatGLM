@@ -84,6 +84,7 @@ class LinearLayer_LoRA(nn.Module):
                 self.bias) + (self.lora_dropout(input) @ self.lora_right_weight
                               @ self.lora_left_weight) * self.lora_scaling
 
+
 # convert the linear layer to LoRA
 def convert_linear_layer_to_lora(model,
                                  part_module_name,
@@ -100,7 +101,6 @@ def convert_linear_layer_to_lora(model,
             module.weight, lora_dim, lora_scaling, lora_droppout,
             module.bias).to(module.weight.device).to(module.weight.dtype)
         recursive_setattr(model, name, tmp)
-
     return model
 
 

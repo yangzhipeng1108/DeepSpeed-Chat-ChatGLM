@@ -16,3 +16,7 @@ quantization 8 之后 step3 不同模块会抢占launch地址
 python train.py --actor-model chatglm-6b  --reward-model chatglm-6b --deployment-type single_node
 
 需要8张A100或者A800
+
+可以修改成deepspeed step 3
+DeepSpeed-Chat-ChatGLM/training/step3_rlhf_finetuning/training_scripts/single_node
+/run_chatglm-6b.sh  

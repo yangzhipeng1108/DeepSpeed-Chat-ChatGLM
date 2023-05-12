@@ -98,7 +98,8 @@ class DeepSpeedPPOTrainer():
         self.train()
 
         pad_token_id = self.tokenizer.pad_token_id
-        attention_mask = seq.not_equal(pad_token_id).long()
+        # attention_mask = seq.not_equal(pad_token_id).long()
+        attention_mask = seq.not_equal(pad_token_id)
 
         with torch.no_grad():
             output = self.actor_model(seq, attention_mask=attention_mask)

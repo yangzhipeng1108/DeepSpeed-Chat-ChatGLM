@@ -36,13 +36,13 @@ def create_hf_model(model_class,
     if rlhf_training:
         # the weight loading is handled by create critic model
         if "chatglm" in model_name_or_path:
-            model = AutoModel.from_pretrained(model_name_or_path, config=model_config, trust_remote_code=True)
+            model = AutoModel.from_pretrained(model_name_or_path, config=model_config, empty_init=False, trust_remote_code=True)
         else:
             model = model_class.from_config(model_config)
     else:
         print(model_name_or_path)
         if "chatglm" in model_name_or_path:
-            model = AutoModel.from_pretrained(model_name_or_path, config=model_config, trust_remote_code=True)
+            model = AutoModel.from_pretrained(model_name_or_path, config=model_config,empty_init=False,  trust_remote_code=True)
         else:
             model = model_class.from_pretrained(
                 model_name_or_path,

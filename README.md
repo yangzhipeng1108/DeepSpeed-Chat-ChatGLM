@@ -20,3 +20,8 @@ python train.py --actor-model chatglm-6b  --reward-model chatglm-6b --deployment
 可以修改成deepspeed step 3
 DeepSpeed-Chat-ChatGLM/training/step3_rlhf_finetuning/training_scripts/single_node
 /run_chatglm-6b.sh  
+
+
+# 推理 inference
+
+sh inference.sh

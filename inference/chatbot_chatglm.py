@@ -76,8 +76,7 @@ def parse_text(text):
 def predict(input, max_length=2048, top_p=0.7, temperature=0.95, history=None):
     chatbot = []
     chatbot.append((parse_text(input), ""))
-    print(input)
-    print("-" * 50)
+    
     for response, history in model.stream_chat(tokenizer, input, history, max_length=max_length, top_p=top_p,
                                                temperature=temperature):
         chatbot[-1] = (parse_text(input), parse_text(response))
@@ -90,11 +89,11 @@ def predict(input, max_length=2048, top_p=0.7, temperature=0.95, history=None):
     return history
 
 
-def get_user_input(user_input):
+def get_user_input():
     tmp = input("Enter input (type 'quit' to exit, 'clear' to clean memory): ")
     new_inputs = f"Human: {tmp}\n Assistant: "
-    user_input += f" {new_inputs}"
-    return user_input, tmp == "quit", tmp == "clear"
+
+    return new_inputs, tmp == "quit", tmp == "clear"
 
 
 def get_model_response(generator, user_input, max_new_tokens):
@@ -111,19 +110,17 @@ def process_response(response, num_rounds):
         place_of_second_q = all_positions[num_rounds]
     if place_of_second_q != -1:
         output = output[0:place_of_second_q]
-    if "Assistant:" in output:
-        output = output.split('Assistant:')[1]
+    if 'Assistant:' in output:
+        output = output.split('Assistant:')[1]      
     return output
 
-
 def main():
-
-    user_input = ""
+    
     num_rounds = 0
     history = []
     while True:
         num_rounds += 1
-        user_input, quit, clear = get_user_input(user_input)
+        user_input, quit, clear = get_user_input()
 
         if quit:
             break
@@ -131,16 +128,12 @@ def main():
             user_input, num_rounds = "", 0
             continue
 
-
-
         history = predict(user_input,history = history)
         questions_h, answers_h = zip(*history)
         output = process_response(answers_h, num_rounds)
 
         print("-" * 30 + f" Round {num_rounds} " + "-" * 30)
         print(f"{output}")
-        user_input = f"{output}\n\n"
-
 
 if __name__ == "__main__":
     # Silence warnings about `max_new_tokens` and `max_length` being set
@@ -148,15 +141,3 @@ if __name__ == "__main__":
 
     args = parse_args()
     main()
-
-# Example:
-"""
- Human: what is internet explorer?
- Assistant:
-Internet Explorer is an internet browser developed by Microsoft. It is primarily used for browsing the web, but can also be used to run some applications. Internet Explorer is often considered the best and most popular internet browser currently available, though there are many other options available.
-
- Human: what is edge?
- Assistant:
- Edge is a newer version of the Microsoft internet browser, developed by Microsoft. It is focused on improving performance and security, and offers a more modern user interface. Edge is currently the most popular internet browser on the market, and is also used heavily by Microsoft employees.
-"""
-

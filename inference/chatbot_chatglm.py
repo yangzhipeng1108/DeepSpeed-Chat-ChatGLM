@@ -9,8 +9,8 @@ import logging
 import transformers  # noqa: F401
 import os
 import json
-from transformers import pipeline, set_seed
-from transformers import AutoConfig, AutoModel, AutoTokenizer
+from collections import defaultdict
+from transformers import AutoModel, AutoTokenizer
 
 
 def parse_args():
@@ -28,31 +28,66 @@ def parse_args():
     return args
 
 
-def get_generator(path):
-    if os.path.exists(path):
-        # Locally tokenizer loading has some issue, so we need to force download
-        model_json = os.path.join(path, "config.json")
-        if os.path.exists(model_json):
-            model_json_file = json.load(open(model_json))
-            model_name = model_json_file["_name_or_path"]
-            tokenizer = AutoTokenizer.from_pretrained(model_name,
-                                                      trust_remote_code=True)
+
+
+args = parse_args()
+
+tokenizer = AutoTokenizer.from_pretrained(args.path, trust_remote_code=True)
+model = AutoModel.from_pretrained(args.path, trust_remote_code=True).half().cuda()
+model = model.eval()
+
+"""Override Chatbot.postprocess"""
+
+
+
+def parse_text(text):
+    """copy from https://github.com/GaiZhenbiao/ChuanhuChatGPT/"""
+    lines = text.split("\n")
+    lines = [line for line in lines if line != ""]
+    count = 0
+    for i, line in enumerate(lines):
+        if "```" in line:
+            count += 1
+            items = line.split('`')
+            if count % 2 == 1:
+                lines[i] = f'<pre><code class="language-{items[-1]}">'
+            else:
+                lines[i] = f'<br></code></pre>'
+        else:
+            if i > 0:
+                if count % 2 == 1:
+                    line = line.replace("`", "\`")
+                    line = line.replace("<", "&lt;")
+                    line = line.replace(">", "&gt;")
+                    line = line.replace(" ", "&nbsp;")
+                    line = line.replace("*", "&ast;")
+                    line = line.replace("_", "&lowbar;")
+                    line = line.replace("-", "&#45;")
+                    line = line.replace(".", "&#46;")
+                    line = line.replace("!", "&#33;")
+                    line = line.replace("(", "&#40;")
+                    line = line.replace(")", "&#41;")
+                    line = line.replace("$", "&#36;")
+                lines[i] = "<br>"+line
+    text = "".join(lines)
+    return text
+
+
+def predict(input, max_length=2048, top_p=0.7, temperature=0.95, history=None):
+    chatbot = []
+    chatbot.append((parse_text(input), ""))
+    print(input)
+    print("-" * 50)
+    for response, history in model.stream_chat(tokenizer, input, history, max_length=max_length, top_p=top_p,
+                                               temperature=temperature):
+        chatbot[-1] = (parse_text(input), parse_text(response))
+
+    if len(history) == 0:
+        history.append(chatbot[-1])
     else:
-        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+        history[-1] = chatbot[-1]
 
-    tokenizer.pad_token = tokenizer.eos_token
-
-    model_config = AutoConfig.from_pretrained(path, trust_remote_code=True)
-    model = AutoModel.from_pretrained(path, config=model_config, trust_remote_code=True).half()
-
-    model.config.end_token_id = tokenizer.eos_token_id
-    model.config.pad_token_id = model.config.eos_token_id
-    model.resize_token_embeddings(len(tokenizer))
-    generator = pipeline("text-generation",
-                         model=model,
-                         tokenizer=tokenizer,
-                         device="cuda:0")
-    return generator
+    return history
 
 
 def get_user_input(user_input):
@@ -68,7 +103,7 @@ def get_model_response(generator, user_input, max_new_tokens):
 
 
 def process_response(response, num_rounds):
-    output = str(response[0]["generated_text"])
+    output = str(response[-1])
     output = output.replace("<|endoftext|></s>", "")
     all_positions = [m.start() for m in re.finditer("Human: ", output)]
     place_of_second_q = -1
@@ -76,15 +111,16 @@ def process_response(response, num_rounds):
         place_of_second_q = all_positions[num_rounds]
     if place_of_second_q != -1:
         output = output[0:place_of_second_q]
+    if "Assistant:" in output:
+        output = output.split('Assistant:')[1]
     return output
 
 
-def main(args):
-    generator = get_generator(args.path)
-    set_seed(42)
+def main():
 
     user_input = ""
     num_rounds = 0
+    history = []
     while True:
         num_rounds += 1
         user_input, quit, clear = get_user_input(user_input)
@@ -95,9 +131,11 @@ def main(args):
             user_input, num_rounds = "", 0
             continue
 
-        response = get_model_response(generator, user_input,
-                                      args.max_new_tokens)
-        output = process_response(response, num_rounds)
+
+
+        history = predict(user_input,history = history)
+        questions_h, answers_h = zip(*history)
+        output = process_response(answers_h, num_rounds)
 
         print("-" * 30 + f" Round {num_rounds} " + "-" * 30)
         print(f"{output}")
@@ -109,7 +147,7 @@ if __name__ == "__main__":
     logging.getLogger("transformers").setLevel(logging.ERROR)
 
     args = parse_args()
-    main(args)
+    main()
 
 # Example:
 """
@@ -121,3 +159,4 @@ Internet Explorer is an internet browser developed by Microsoft. It is primarily
  Assistant:
  Edge is a newer version of the Microsoft internet browser, developed by Microsoft. It is focused on improving performance and security, and offers a more modern user interface. Edge is currently the most popular internet browser on the market, and is also used heavily by Microsoft employees.
 """
+

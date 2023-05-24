@@ -65,12 +65,13 @@ class DeepSpeedPPOTrainer():
         self.gamma = 1.0
         self.lam = 0.95
 
-    def _generate_sequence(self, prompts):
+    def _generate_sequence(self, prompts, mask):
 
         max_min_length = self.max_answer_seq_len + prompts.shape[1]
 
         with torch.no_grad():
             seq = self.actor_model.module.generate(prompts,
+                                                   attention_mask=mask,
                                                    max_length=max_min_length,
                                                    min_length=max_min_length)
 
@@ -92,14 +93,19 @@ class DeepSpeedPPOTrainer():
 
         return out_seq
 
-    def generate_experience(self, prompts):
+    def generate_experience(self, prompts, mask):
         self.eval()
-        seq = self._generate_sequence(prompts)
+        seq = self._generate_sequence(prompts, mask)
         self.train()
 
         pad_token_id = self.tokenizer.pad_token_id
-        # attention_mask = seq.not_equal(pad_token_id).long()
-        attention_mask = seq.not_equal(pad_token_id)
+        action_mask = seq.not_equal(pad_token_id).long()
+        attention_mask_1= action_mask.unsqueeze(2)
+        attention_mask_2 = action_mask.unsqueeze(1)
+        # attention_mask_2 = torch.ones(attention_mask.shape[0],1, attention_mask.shape[1])
+        attention_mask = (attention_mask_1 * attention_mask_2) > 0
+        attention_mask = attention_mask.unsqueeze(1)
+        print(attention_mask.shape)
 
         with torch.no_grad():
             output = self.actor_model(seq, attention_mask=attention_mask)
@@ -122,7 +128,8 @@ class DeepSpeedPPOTrainer():
             'value': values,
             'rewards': reward_score,
             'input_ids': seq,
-            "attention_mask": attention_mask
+            "attention_mask": attention_mask,
+            "action_mask":action_mask
         }
 
     def compute_rewards(self, prompts, log_probs, ref_log_probs, reward_score,
@@ -133,7 +140,7 @@ class DeepSpeedPPOTrainer():
         start = prompts.shape[1] - 1
         ends = start + action_mask[:, start:].sum(1)
         reward_clip = torch.clamp(reward_score, -self.clip_reward_value,
-                                  self.clip_reward_value)
+                                  self.clip_reward_value)  #截断
         batch_size = log_probs.shape[0]
         for j in range(batch_size):
             rewards[j, start:ends[j]][-1] += reward_clip[j]
@@ -149,10 +156,11 @@ class DeepSpeedPPOTrainer():
         reward_score = inputs['rewards']
         values = inputs['value']
         attention_mask = inputs['attention_mask']
+        action_mask = inputs['action_mask']
         seq = inputs['input_ids']
 
         start = prompts.size()[-1] - 1
-        action_mask = attention_mask[:, 1:]
+        action_mask = action_mask[:, 1:]
 
         old_values = values
         with torch.no_grad():

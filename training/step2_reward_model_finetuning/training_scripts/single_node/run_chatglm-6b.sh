@@ -15,6 +15,7 @@ mkdir -p $OUTPUT
 
 deepspeed main.py \
    --data_path Smart/Q_A \
+   --data_output_path /root/nas-share/chat/DeepSpeed-Chat/Smart/Q_A  \
    --model_name_or_path THUDM/chatglm-6b\
    --num_padding_at_beginning 1 \
    --per_device_train_batch_size 4 \

@@ -26,6 +26,7 @@ Critic_Lr=5e-6
 
 deepspeed --master_port 12346 main.py \
    --data_path Smart/Q_A \
+   --data_output_path /root/nas-share/chat/DeepSpeed-Chat/Smart/Q_A  \
    --actor_model_name_or_path $ACTOR_MODEL_PATH \
    --critic_model_name_or_path $CRITIC_MODEL_PATH \
    --num_padding_at_beginning 4 \

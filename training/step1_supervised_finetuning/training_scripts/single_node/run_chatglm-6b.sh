@@ -16,6 +16,7 @@ printf "Hello, Shell"
 
 deepspeed main.py \
    --data_path Smart/Q_A\
+   --data_output_path /root/nas-share/chat/DeepSpeed-Chat/Smart/Q_A  \
    --model_name_or_path THUDM/chatglm-6b \
    --per_device_train_batch_size 8 \
    --per_device_eval_batch_size 8 \

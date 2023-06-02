@@ -67,20 +67,34 @@ class RewardModel(nn.Module):
         chosen_rewards = rewards[:bs]
         rejected_rewards = rewards[bs:]
 
+        print(chosen_rewards)
+        print(rejected_rewards)
+
         # Compute pairwise loss. Only backprop on the different tokens before padding
         loss = 0
         for i in range(bs):
+
             chosen_id = chosen_ids[i]
             rejected_id = rejected_ids[i]
             chosen_reward = chosen_rewards[i]
             rejected_reward = rejected_rewards[i]
 
+            c_inds = (chosen_id == self.PAD_ID).nonzero()[-1]
+            r_ind = (rejected_id == self.PAD_ID).nonzero()[-1]
+
+            chosen_id = torch.cat((chosen_id[c_inds[0] + 1:] ,chosen_id[:c_inds[0] + 1]))
+            chosen_reward = torch.cat((chosen_reward[ c_inds[0] + 1:] , chosen_reward[ :c_inds[0] + 1]))
+            rejected_id = torch.cat((rejected_id[ r_ind[0] + 1:] , rejected_id[ :r_ind[0] + 1]))
+            rejected_reward = torch.cat((rejected_reward[ r_ind[0] + 1:] , rejected_reward[ :r_ind[0] + 1]))
+
+
             c_inds = (chosen_id == self.PAD_ID).nonzero()
+            print(c_inds)
             c_ind = c_inds[self.num_padding_at_beginning].item() if len(
                 c_inds
             ) > self.num_padding_at_beginning else seq_len  # OPT model pads the first token, so we need to use the second padding token as the end of the sequence
             check_divergence = (chosen_id != rejected_id).nonzero()
-
+            print(check_divergence)
             if len(check_divergence) == 0:
                 end_ind = rejected_reward.size(-1)
                 divergence_ind = end_ind - 1
@@ -93,10 +107,11 @@ class RewardModel(nn.Module):
                 end_ind = max(c_ind, r_ind)
                 divergence_ind = check_divergence[0]
             assert divergence_ind > 0
+            print(divergence_ind)
             c_truncated_reward = chosen_reward[divergence_ind:end_ind]
             r_truncated_reward = rejected_reward[divergence_ind:end_ind]
             chosen_mean_scores.append(
-                chosen_reward[c_ind - 1])  #use the end score for reference
+                chosen_reward[c_ind - 1])  # use the end score for reference
             rejected_mean_scores.append(rejected_reward[r_ind - 1])
 
             loss += -torch.log(
@@ -143,6 +158,13 @@ class RewardModel(nn.Module):
             for i in range(bs):
                 input_id = input_ids[i]
                 value = values[i]
+                print(input_id)
+                print(value)
+
+                c_inds = (input_id == self.PAD_ID).nonzero()[-1]
+
+                input_id = torch.cat((input_id[ c_inds[0] + 1:] , input_id[ :c_inds[0] + 1]))
+                value = torch.cat((value[ c_inds[0] + 1:] , value[ :c_inds[0] + 1]))
 
                 c_inds = (input_id[prompt_length:] == self.PAD_ID).nonzero()
                 # here we only use the answer part of the sequence so we do not need to care about the padding at the beginning

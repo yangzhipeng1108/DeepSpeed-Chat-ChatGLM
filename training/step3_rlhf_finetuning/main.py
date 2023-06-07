@@ -386,6 +386,7 @@ def main():
         tokenizer = load_hf_tokenizer(args.actor_model_name_or_path,
                                       fast_tokenizer=True)
     tokenizer.pad_token = tokenizer.eos_token
+    print(tokenizer.pad_token)
 
     prompt_train_dataloader, unsupervised_train_dataloader, num_total_iters = create_datasets(
         args=args, tokenizer=tokenizer, train_phase=3)
@@ -430,10 +431,12 @@ def main():
             # if length > args.max_prompt_seq_len:
             #     prompts = prompts[:, length - args.max_prompt_seq_len:]
             #     raise ValueError("Prompt length is too long")
-
+            
+            print_rank_0(batch_prompt['prompt_att_mask'].shape, args.global_rank)
             out = trainer.generate_experience(batch_prompt['prompt'],
                                               batch_prompt['prompt_att_mask'])
             exp_dataset = exp_mini_dataset.add(out)
+            print_rank_0(out, args.global_rank)
 
             if exp_dataset is not None:
                 inner_iter = 0
@@ -446,11 +449,12 @@ def main():
                 for ppo_ep in range(args.ppo_epochs):
                     for i, (exp_data, unsup_data) in enumerate(
                             zip(exp_dataset, unsup_dataset)):
+                        # print_rank_0(exp_data, args.global_rank)
                         actor_loss, critic_loss = trainer.train_rlhf(exp_data)
                         actor_loss_sum += actor_loss.item()
                         critic_loss_sum += critic_loss.item()
                         average_reward += exp_data["rewards"].mean()
-
+                        
                         if unsupervised_training_enabled:
                             unsup_loss = trainer.train_unsupervised(
                                 unsup_data, args.unsup_coef)

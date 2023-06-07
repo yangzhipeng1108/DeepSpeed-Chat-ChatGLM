@@ -12,7 +12,7 @@ from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 
-from utils.utils import print_rank_0
+from utils.utils import print_rank_0,load_hf_chatglm_tokenizer
 
 
 def print_all_ranks(tag, value, rank):
@@ -81,6 +81,7 @@ class DeepSpeedPPOTrainer():
         prompt_length = prompts.shape[1]
         ans = seq[:, prompt_length:]
         self.prompt_length = prompt_length
+
         valid_ans_len = (ans != self.tokenizer.pad_token_id).sum(dim=-1)
         out_seq = []
         for i in range(batch_size):
@@ -100,12 +101,30 @@ class DeepSpeedPPOTrainer():
 
         pad_token_id = self.tokenizer.pad_token_id
         action_mask = seq.not_equal(pad_token_id).long()
-        attention_mask_1= action_mask.unsqueeze(2)
-        attention_mask_2 = action_mask.unsqueeze(1)
-        # attention_mask_2 = torch.ones(attention_mask.shape[0],1, attention_mask.shape[1])
-        attention_mask = (attention_mask_1 * attention_mask_2) > 0
-        attention_mask = attention_mask.unsqueeze(1)
-        print(attention_mask.shape)
+        # attention_mask_1 = torch.ones(action_mask.shape[0], action_mask.shape[1],1).cuda()
+        # attention_mask_2= action_mask.unsqueeze(1)
+        # attention_mask = (attention_mask_1 * attention_mask_2) > 0
+        # attention_mask = attention_mask.unsqueeze(1)
+        # # print(attention_mask.shape)
+
+        prompt_length = prompts.shape[1]
+        ans = seq[:, prompt_length:]
+
+        tokenizer = load_hf_chatglm_tokenizer(self.args.model_name_or_path, trust_remote_code=True)
+
+        tokenizer.pad_token = tokenizer.eos_token
+        seq_result = [tokenizer.decode(i) for i in ans]
+
+        chosen_token = tokenizer(seq_result,
+                                 max_length=self.args.max_answer_seq_len,
+                                 padding="max_length",
+                                 truncation=True,
+                                 return_tensors="pt")
+        ans_mask= chosen_token[
+            "attention_mask"].squeeze(0)
+
+        attention_mask = torch.cat((mask,ans_mask),dim = 1)
+
 
         with torch.no_grad():
             output = self.actor_model(seq, attention_mask=attention_mask)
@@ -137,6 +156,14 @@ class DeepSpeedPPOTrainer():
 
         kl_divergence_estimate = -self.kl_ctl * (log_probs - ref_log_probs)
         rewards = kl_divergence_estimate
+
+        for i in range(prompts.sahpe[0]):
+            prompts_inter = prompts[i]
+            mask_inter = action_mask[i]
+            c_inds = (mask_inter == 1).nonzero()[0]
+            prompts[i] = torch.cat((prompts_inter[c_inds[0] + 1:], prompts_inter[:c_inds[0] + 1]))
+            action_mask[i] = torch.cat((mask_inter[c_inds[0] + 1:], mask_inter[:c_inds[0] + 1]))
+
         start = prompts.shape[1] - 1
         ends = start + action_mask[:, start:].sum(1)
         reward_clip = torch.clamp(reward_score, -self.clip_reward_value,
@@ -202,6 +229,7 @@ class DeepSpeedPPOTrainer():
 
     def critic_loss_fn(self, values, old_values, returns, mask):
         ## value loss
+        mask = mask[:,::-1]
         values_clipped = torch.clamp(
             values,
             old_values - self.cliprange_value,
@@ -218,7 +246,7 @@ class DeepSpeedPPOTrainer():
         lastgaelam = 0
         advantages_reversed = []
         length = rewards.size()[-1]
-        for t in reversed(range(start, length)):
+        for t in range(start, length):
             nextvalues = values[:, t + 1] if t < length - 1 else 0.0
             delta = rewards[:, t] + self.gamma * nextvalues - values[:, t]
             lastgaelam = delta + self.gamma * self.lam * lastgaelam

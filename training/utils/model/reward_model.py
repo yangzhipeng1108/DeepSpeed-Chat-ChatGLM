@@ -171,6 +171,7 @@ class RewardModel(nn.Module):
                 c_ind = c_inds[0].item() + prompt_length if len(
                     c_inds) > 0 else seq_len
                 chosen_end_scores.append(value[c_ind - 1])
+                values[i] = value
             return {
                 "values": values,
                 "chosen_end_scores": torch.stack(chosen_end_scores),
